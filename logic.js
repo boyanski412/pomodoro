@@ -82,3 +82,50 @@ export function validateSettings(raw) {
   if (Object.keys(errors).length) return { ok: false, errors };
   return { ok: true, value: { session_minutes: minutes, volume, notification_text: text, daily_target: target } };
 }
+
+// ---- Stats (days are local-time days; a session belongs to the day it started) ----
+
+const pad = n => String(n).padStart(2, '0');
+export const localDay = t => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const addDays = (day, n) => { const [y, m, d] = day.split('-').map(Number); return localDay(new Date(y, m - 1, d + n, 12)); };
+const weekOf = day => { const [y, m, d] = day.split('-').map(Number); return addDays(day, -((new Date(y, m - 1, d, 12).getDay() + 6) % 7)); };
+const round1 = x => Math.round(x * 10) / 10;
+const daysEnding = (today, n) => Array.from({ length: n }, (_, i) => addDays(today, i - n + 1));
+const avgBy = (rows, key, val) => {
+  const m = new Map();
+  for (const r of rows) { const k = key(r), v = val(r); if (v == null) continue; const a = m.get(k) ?? [0, 0]; m.set(k, [a[0] + v, a[1] + 1]); }
+  return [...m].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, [s, c]]) => [k, round1(s / c)]);
+};
+
+export const finishedOnDay = (sessions, day) =>
+  sessions.filter(s => s.status === 'finished' && localDay(s.started_at) === day).length;
+
+export function streak(sessions, target, today) {
+  let day = finishedOnDay(sessions, today) >= target ? today : addDays(today, -1);
+  let n = 0;
+  while (finishedOnDay(sessions, day) >= target) { n++; day = addDays(day, -1); }
+  return n;
+}
+
+export function stats(sessions, interruptions, target, today) {
+  const minutesOn = day => Math.round(sessions.filter(s => localDay(s.started_at) === day)
+    .reduce((m, s) => m + s.focus_seconds, 0) / 60);
+  const byProject = new Map();
+  for (const s of sessions) { const p = s.project ?? '(none)'; byProject.set(p, (byProject.get(p) ?? 0) + s.focus_seconds); }
+  const pausesBySession = new Map();
+  for (const i of interruptions) if (i.kind === 'pause') pausesBySession.set(i.session_id, (pausesBySession.get(i.session_id) ?? 0) + 1);
+  const notes = new Map();
+  for (const i of interruptions) { const k = i.note?.trim().toLowerCase(); if (k) notes.set(k, (notes.get(k) ?? 0) + 1); }
+  return {
+    todayCount: finishedOnDay(sessions, today),
+    target,
+    streak: streak(sessions, target, today),
+    last7: daysEnding(today, 7).map(day => ({ day, count: finishedOnDay(sessions, day) })),
+    focusByDay30: daysEnding(today, 30).map(day => ({ day, minutes: minutesOn(day) })),
+    focusByProject: [...byProject].sort((a, b) => b[1] - a[1]).map(([project, s]) => ({ project, minutes: Math.round(s / 60) })),
+    ratingByHour: avgBy(sessions, s => new Date(s.started_at).getHours(), s => s.rating).map(([hour, avg]) => ({ hour, avg })),
+    ratingByWeek: avgBy(sessions, s => weekOf(localDay(s.started_at)), s => s.rating).map(([week, avg]) => ({ week, avg })),
+    pausesPerSessionByWeek: avgBy(sessions, s => weekOf(localDay(s.started_at)), s => pausesBySession.get(s.id) ?? 0).map(([week, avg]) => ({ week, avg })),
+    topDistractionNotes: [...notes].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([note, count]) => ({ note, count })),
+  };
+}

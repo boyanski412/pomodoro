@@ -70,3 +70,36 @@ test('cleanNote', () => {
   assert.equal(L.cleanNote('   '), null);
   assert.equal(L.cleanNote(' x '), 'x');
 });
+
+const row = (startIso, o = {}) => ({ id: startIso, started_at: startIso, status: 'finished',
+  focus_seconds: 1500, project: 'A', rating: 4, ...o });
+test('stats of empty history', () => {
+  const st = L.stats([], [], 4, '2026-10-16');
+  assert.equal(st.todayCount, 0); assert.equal(st.streak, 0);
+  assert.equal(st.last7.length, 7); assert.equal(st.focusByDay30.length, 30);
+  assert.deepEqual(st.focusByProject, []); assert.deepEqual(st.topDistractionNotes, []);
+});
+test('streak counts back from today, or yesterday if today unmet', () => {
+  const ss = ['2026-10-14', '2026-10-15'].flatMap(d => [1,2].map(h => row(`${d}T0${h}:00:00Z`)));
+  assert.equal(L.streak(ss, 2, '2026-10-16'), 2);
+  assert.equal(L.streak(ss, 2, '2026-10-17'), 0);
+  assert.equal(L.streak(ss, 3, '2026-10-16'), 0);
+});
+test('abandoned sessions do not count toward target', () => {
+  assert.equal(L.finishedOnDay([row('2026-10-16T08:00:00Z', { status: 'abandoned' })], '2026-10-16'), 0);
+});
+test('session across midnight counts on start day', () => {
+  assert.equal(L.localDay('2026-10-15T20:50:00Z'), '2026-10-15'); // 23:50 Sofia
+  assert.equal(L.localDay('2026-10-15T21:10:00Z'), '2026-10-16'); // 00:10 Sofia
+});
+test('stats aggregates', () => {
+  const ss = [row('2026-10-16T06:00:00Z'), row('2026-10-16T07:00:00Z', { project: null, rating: 2 })];
+  const ints = [{ session_id: ss[0].id, kind: 'pause', note: 'Slack' },
+                { session_id: ss[1].id, kind: 'distraction', note: 'slack' }];
+  const st = L.stats(ss, ints, 4, '2026-10-16');
+  assert.equal(st.todayCount, 2);
+  assert.deepEqual(st.focusByProject, [{ project: 'A', minutes: 25 }, { project: '(none)', minutes: 25 }]);
+  assert.deepEqual(st.ratingByHour, [{ hour: 9, avg: 4 }, { hour: 10, avg: 2 }]);
+  assert.deepEqual(st.topDistractionNotes, [{ note: 'slack', count: 2 }]);
+  assert.equal(st.pausesPerSessionByWeek.at(-1).avg, 0.5);
+});
