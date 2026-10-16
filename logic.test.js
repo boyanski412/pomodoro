@@ -103,3 +103,38 @@ test('stats aggregates', () => {
   assert.deepEqual(st.topDistractionNotes, [{ note: 'slack', count: 2 }]);
   assert.equal(st.pausesPerSessionByWeek.at(-1).avg, 0.5);
 });
+
+// ---- Final-review fixes ----
+const fakeStore = (init = {}) => { const m = new Map(Object.entries(init)); return {
+  getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k),
+  key: i => [...m.keys()][i] ?? null, get length() { return m.size; }, dump: () => Object.fromEntries(m) }; };
+
+test('moveStore carries unsaved work over and leaves nothing behind', () => {
+  const from = fakeStore({ 'pomo:outbox': '[1]', 'pomo:run': '{}', 'pomo:ended': 'null', 'pomo:auth': 'tok', other: 'x' });
+  const to = fakeStore({ 'pomo:outbox': '[0]' });
+  L.moveStore(from, to);
+  assert.deepEqual(to.dump(), { 'pomo:outbox': '[0,1]', 'pomo:run': '{}', 'pomo:ended': 'null' });
+  assert.deepEqual(from.dump(), { other: 'x' });
+});
+test('moveStore keeps the remember flag where it is', () => {
+  const from = fakeStore({ 'pomo:remember': '1' }), to = fakeStore();
+  L.moveStore(from, to);
+  assert.deepEqual(from.dump(), { 'pomo:remember': '1' });
+});
+test('drainOutbox writes an item replaced while a write was in flight', async () => {
+  let box = [{ session: { id: 'a', rating: null } }];
+  const written = [];
+  await L.drainOutbox({
+    read: () => box, write: b => { box = b; },
+    writeItem: async it => { written.push(it.session.rating); if (it.session.rating === null) box = [{ session: { id: 'a', rating: 5 } }]; },
+  });
+  assert.deepEqual(written, [null, 5]);
+  assert.deepEqual(box, []);
+});
+test('drainOutbox stops when nothing can be written', async () => {
+  let box = [{ session: { id: 'a' } }], calls = 0;
+  const out = await L.drainOutbox({ read: () => box, write: b => { box = b; }, writeItem: async () => { calls++; throw new Error('off'); } });
+  assert.equal(calls, 1);
+  assert.equal(box.length, 1);
+  assert.equal(out.error.message, 'off');
+});

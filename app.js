@@ -18,8 +18,14 @@ function clearAll() {
   }
 }
 
-const makeDb = () => supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY,
-  { auth: { storage: store(), storageKey: 'pomo:auth', persistSession: true } });
+let loggingOut = false;
+function makeDb() {
+  const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY,
+    { auth: { storage: store(), storageKey: 'pomo:auth', persistSession: true } });
+  // Expired or revoked login: go to the login screen but keep the outbox and running session; afterLogin flushes.
+  client.auth.onAuthStateChange(event => { if (event === 'SIGNED_OUT' && !loggingOut) show('login'); });
+  return client;
+}
 let db = makeDb();
 let settings = { ...DEFAULTS };
 
@@ -43,7 +49,9 @@ for (const b of document.querySelectorAll('nav [data-view]')) b.onclick = () => 
 $('login-form').onsubmit = async e => {
   e.preventDefault();
   $('login-error').textContent = '';
+  const before = store();
   try { $('remember').checked ? localStorage.setItem('pomo:remember', '1') : localStorage.removeItem('pomo:remember'); } catch {}
+  try { L.moveStore(before, store()); } catch {}
   db = makeDb();
   const { error } = await db.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
   if (error) {
@@ -57,7 +65,9 @@ $('login-form').onsubmit = async e => {
 $('logout').onclick = async () => {
   if ((get('outbox') ?? []).length) { banner('Some sessions aren’t saved yet. Reconnect, then log out.'); return; }
   if (run && !confirm('A session is running. Log out and lose it?')) return;
-  await db.auth.signOut().catch(() => {});
+  loggingOut = true;
+  await db.auth.signOut({ scope: 'local' }).catch(() => {}); // local: don't log out other computers
+  loggingOut = false;
   clearAll();
   run = null; brk = null; ended = null;
   db = makeDb();
@@ -84,10 +94,10 @@ function drawMug(fraction) {
 // ---- Sound and notification ----
 let audio;
 function unlockAudio() { try { audio ??= new AudioContext(); audio.resume(); } catch {} }
-function beep(volume = settings.volume) {
+function beep(volume = settings.volume, delay = 0) {
   unlockAudio();
-  if (!audio) return;
-  const t = audio.currentTime;
+  if (!audio) return [];
+  const t = audio.currentTime + delay, nodes = [];
   for (let i = 0; i < 3; i++) {
     const osc = audio.createOscillator(), gain = audio.createGain();
     osc.frequency.value = 880;
@@ -95,10 +105,16 @@ function beep(volume = settings.volume) {
     gain.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.35 + 0.25);
     osc.connect(gain).connect(audio.destination);
     osc.start(t + i * 0.35); osc.stop(t + i * 0.35 + 0.26);
+    nodes.push(osc);
   }
+  return nodes;
 }
+// Chrome slows timers in hidden tabs to ~1/min; the audio clock isn't throttled, so the end beep is scheduled on it.
+let alarm = [];
+function cancelAlarm() { alarm.forEach(o => { try { o.stop(); } catch {} }); alarm = []; }
+function scheduleAlarm() { cancelAlarm(); if (run && !L.isPaused(run)) alarm = beep(settings.volume, L.timeLeft(run, Date.now())); }
 function announce(text) {
-  beep();
+  if (alarm.length) alarm = []; else beep(); // already scheduled on the audio clock
   document.title = "Time's up";
   try { if (Notification.permission === 'granted') new Notification(text); } catch {}
 }
@@ -146,9 +162,10 @@ $('start').onclick = () => {
   try { if (Notification.permission === 'default') Notification.requestPermission(); } catch {}
   run = L.newRun({ id: crypto.randomUUID(), now: Date.now(), plannedSeconds: settings.session_minutes * 60, project: $('project').value });
   set('run', run);
+  scheduleAlarm();
   controls();
 };
-$('pause').onclick = () => { run = L.pause(run, { id: crypto.randomUUID(), now: Date.now() }); set('run', run); controls(); };
+$('pause').onclick = () => { run = L.pause(run, { id: crypto.randomUUID(), now: Date.now() }); set('run', run); cancelAlarm(); controls(); };
 $('resume').onclick = () => askNote('resume', 'What pulled you away?');
 $('distract').onclick = () => askNote('distraction', 'What distracted you?');
 $('giveup').onclick = () => endRun('abandoned');
@@ -169,6 +186,8 @@ function saveNote(note) {
   noteFor = null;
   $('note-box').hidden = true;
   set('run', run);
+  if (!audio) unlockAudio(); // a click; after a reload this is the first chance to unlock audio
+  scheduleAlarm();
   controls();
 }
 $('note-box').onsubmit = e => { e.preventDefault(); saveNote($('note-input').value); };
@@ -176,6 +195,7 @@ $('note-skip').onclick = () => saveNote('');
 
 function endRun(status) {
   if (noteFor && run) saveNote($('note-input').value);
+  if (status === 'abandoned') cancelAlarm();
   ended = L.closeRun(run, Date.now(), status);
   run = null;
   set('run', null);
@@ -245,19 +265,15 @@ function enqueue(item) {
 let flushing = null;
 function flush() {
   flushing ??= (async () => {
-    const items = get('outbox') ?? [];
-    const { remaining, error } = await L.flushOutbox(items, async it => {
+    const { error } = await L.drainOutbox({ read: () => get('outbox') ?? [], write: b => set('outbox', b), writeItem: async it => {
       const a = await db.from('sessions').upsert(it.session);
       if (a.error) throw a.error;
       if (it.interruptions.length) {
         const b = await db.from('interruptions').upsert(it.interruptions);
         if (b.error) throw b.error;
       }
-    });
-    // Keep anything added or changed while this flush was running.
-    const written = new Set(items.filter(i => !remaining.includes(i)).map(i => JSON.stringify(i)));
-    const left = (get('outbox') ?? []).filter(i => !written.has(JSON.stringify(i)));
-    set('outbox', left);
+    } });
+    const left = get('outbox') ?? [];
     if (left.length) {
       const offline = !navigator.onLine || /fetch|network|load failed/i.test(String(error?.message));
       banner('Not saved yet, will retry.' + (offline ? ' If this keeps happening, restore your project in the Supabase dashboard.' : ''));

@@ -129,3 +129,37 @@ export function stats(sessions, interruptions, target, today) {
     topDistractionNotes: [...notes].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([note, count]) => ({ note, count })),
   };
 }
+
+// ---- Outbox draining and storage moves (Storage-like objects passed in, so these stay testable) ----
+
+// Flushes until every item present has been tried once; picks up items added or replaced mid-flush.
+export async function drainOutbox({ read, write, writeItem }) {
+  const tried = new Set();
+  let error = null;
+  for (;;) {
+    const items = read();
+    const fresh = items.filter(i => !tried.has(JSON.stringify(i)));
+    if (!fresh.length) return { error };
+    fresh.forEach(i => tried.add(JSON.stringify(i)));
+    const res = await flushOutbox(fresh, writeItem);
+    error = res.error;
+    const written = new Set(fresh.filter(i => !res.remaining.includes(i)).map(i => JSON.stringify(i)));
+    write(read().filter(i => !written.has(JSON.stringify(i))));
+  }
+}
+
+// Moves unsaved work (outbox, running and ended session) to the newly chosen storage and wipes our keys from the old one.
+export function moveStore(from, to) {
+  if (from === to) return;
+  const parse = k => { try { return JSON.parse(from.getItem(k)); } catch { return null; } };
+  const outbox = parse('pomo:outbox');
+  if (Array.isArray(outbox) && outbox.length) {
+    let existing = [];
+    try { existing = JSON.parse(to.getItem('pomo:outbox')) ?? []; } catch {}
+    to.setItem('pomo:outbox', JSON.stringify([...existing, ...outbox]));
+  }
+  for (const k of ['pomo:run', 'pomo:ended']) { const v = from.getItem(k); if (v !== null) to.setItem(k, v); }
+  const ours = [];
+  for (let i = 0; i < from.length; i++) { const k = from.key(i); if (k.startsWith('pomo:') && k !== 'pomo:remember') ours.push(k); }
+  ours.forEach(k => from.removeItem(k));
+}
