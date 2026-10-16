@@ -43,7 +43,7 @@ export function closeRun(run, now, status) {
     started_at: iso(run.startedAt),
     ended_at: iso(end),
     planned_seconds: run.plannedSeconds,
-    focus_seconds: Math.round(Math.min(run.plannedSeconds, (end - run.startedAt) / 1000 - paused)),
+    focus_seconds: Math.max(0, Math.round(Math.min(run.plannedSeconds, (end - run.startedAt) / 1000 - paused))), // clamp: clock may move backwards
     status,
     project: run.project,
     rating: null,
@@ -51,7 +51,7 @@ export function closeRun(run, now, status) {
   };
   const interruptions = [
     ...pauses.map(p => ({ id: p.id, session_id: run.id, kind: 'pause', at: iso(p.start),
-      duration_seconds: Math.round((p.end - p.start) / 1000), note: p.note })),
+      duration_seconds: Math.max(0, Math.round((p.end - p.start) / 1000)), note: p.note })),
     ...run.distractions.map(d => ({ id: d.id, session_id: run.id, kind: 'distraction', at: iso(d.at),
       duration_seconds: null, note: d.note })),
   ].sort((a, b) => a.at.localeCompare(b.at));

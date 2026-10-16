@@ -65,6 +65,7 @@ $('login-form').onsubmit = async e => {
 $('logout').onclick = async () => {
   if ((get('outbox') ?? []).length) { banner('Some sessions aren’t saved yet. Reconnect, then log out.'); return; }
   if (run && !confirm('A session is running. Log out and lose it?')) return;
+  if (ended && !confirm('Your rating for the last session isn’t saved yet. Log out anyway?')) return;
   loggingOut = true;
   await db.auth.signOut({ scope: 'local' }).catch(() => {}); // local: don't log out other computers
   loggingOut = false;
@@ -172,6 +173,7 @@ $('giveup').onclick = () => endRun('abandoned');
 $('skipbreak').onclick = () => { brk = null; controls(); };
 
 function askNote(kind, label) {
+  if (noteFor) return; // keep the first click's time
   noteFor = { kind, at: Date.now() };
   $('note-label').textContent = label;
   $('note-input').value = '';
@@ -194,7 +196,7 @@ $('note-box').onsubmit = e => { e.preventDefault(); saveNote($('note-input').val
 $('note-skip').onclick = () => saveNote('');
 
 function endRun(status) {
-  if (noteFor && run) saveNote($('note-input').value);
+  if (noteFor && run) { saveNote($('note-input').value); if (!run) return; } // saveNote's tick may already have ended it
   if (status === 'abandoned') cancelAlarm();
   ended = L.closeRun(run, Date.now(), status);
   run = null;
@@ -206,7 +208,7 @@ function endRun(status) {
 }
 
 // Another tab on a remembered computer started a session.
-addEventListener('storage', e => { if (e.key === 'pomo:run' && e.newValue && !run) $('tab-warning').hidden = false; });
+addEventListener('storage', e => { if (e.key === 'pomo:run') $('tab-warning').hidden = !(e.newValue && !run); });
 
 // ---- End-of-session form ----
 function openEnd() {
@@ -275,8 +277,8 @@ function flush() {
     } });
     const left = get('outbox') ?? [];
     if (left.length) {
-      const offline = !navigator.onLine || /fetch|network|load failed/i.test(String(error?.message));
-      banner('Not saved yet, will retry.' + (offline ? ' If this keeps happening, restore your project in the Supabase dashboard.' : ''));
+      const serverDown = navigator.onLine && /fetch|network|load failed/i.test(String(error?.message));
+      banner('Not saved yet, will retry.' + (serverDown ? ' If this keeps happening, restore your project in the Supabase dashboard.' : ''));
     } else banner(null);
   })().finally(() => { flushing = null; });
   return flushing;

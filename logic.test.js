@@ -138,3 +138,10 @@ test('drainOutbox stops when nothing can be written', async () => {
   assert.equal(box.length, 1);
   assert.equal(out.error.message, 'off');
 });
+
+test('closeRun never produces negative durations when the clock moves backwards', () => {
+  const r = L.resume(L.pause(run(), { id: 'p1', now: T0 + s(100) }), { now: T0 + s(40), note: '' }); // clock jumped back
+  const { session, interruptions } = L.closeRun(r, T0 - s(10), 'abandoned');
+  assert.ok(session.focus_seconds >= 0);
+  assert.ok(interruptions[0].duration_seconds >= 0);
+});
