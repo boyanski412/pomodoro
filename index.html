@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pomodoro</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<nav id="nav" hidden>
+  <button data-view="timer">Timer</button>
+  <button data-view="stats">Stats</button>
+  <button data-view="settings">Settings</button>
+  <button id="logout">Log out</button>
+</nav>
+<p id="banner" class="banner" role="status" hidden></p>
+<p id="tab-warning" class="banner" hidden>This session is already running in another tab.</p>
+
+<main>
+<section id="login" class="view" hidden>
+  <h1>Pomodoro</h1>
+  <form id="login-form">
+    <label>Email <input id="email" type="email" autocomplete="username" required></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+    <label class="check"><input id="remember" type="checkbox"> Remember this computer</label>
+    <button class="primary">Log in</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</section>
+
+<section id="timer" class="view" hidden>
+  <label class="project">Working on
+    <input id="project" list="projects" placeholder="Writing chapter 3" maxlength="80">
+  </label>
+  <datalist id="projects"></datalist>
+  <svg id="mug" viewBox="0 0 200 200" role="img" aria-label="Coffee mug timer">
+    <defs><clipPath id="mug-inside"><path d="M52 52 V112 a43 43 0 0 0 86 0 V52 Z"/></clipPath></defs>
+    <rect width="200" height="200" rx="32" class="tile"/>
+    <rect id="coffee" x="45" y="52" width="100" height="120" clip-path="url(#mug-inside)" class="coffee"/>
+    <path d="M50 48 V112 a45 45 0 0 0 90 0 V48" class="outline"/>
+    <path d="M140 72 h10 a20 20 0 0 1 0 40 h-10" class="outline"/>
+  </svg>
+  <p id="time" class="time" aria-live="off">25:00</p>
+  <p id="phase" class="phase"></p>
+  <div class="controls">
+    <button id="start" class="primary">Start</button>
+    <button id="pause" hidden>Pause</button>
+    <button id="resume" class="primary" hidden>Resume</button>
+    <button id="distract" hidden>Distracted</button>
+    <button id="giveup" hidden>Give up</button>
+    <button id="skipbreak" hidden>Skip break</button>
+  </div>
+  <form id="note-box" class="note-box" hidden>
+    <label><span id="note-label">What pulled you away?</span> <input id="note-input" maxlength="200"></label>
+    <button class="primary">Save</button>
+    <button type="button" id="note-skip">Skip</button>
+  </form>
+</section>
+
+<section id="end" class="view" hidden>
+  <h2 id="end-title">Session done</h2>
+  <form id="end-form">
+    <fieldset class="rating">
+      <legend>How focused were you?</legend>
+      <label><input type="radio" name="rating" value="1"> 1</label>
+      <label><input type="radio" name="rating" value="2"> 2</label>
+      <label><input type="radio" name="rating" value="3"> 3</label>
+      <label><input type="radio" name="rating" value="4"> 4</label>
+      <label><input type="radio" name="rating" value="5"> 5</label>
+    </fieldset>
+    <label>Note <textarea id="end-note" rows="3" maxlength="1000"></textarea></label>
+    <div id="end-ints"></div>
+    <button class="primary">Save</button>
+  </form>
+</section>
+
+<section id="stats" class="view" hidden>
+  <div class="tiles">
+    <div class="tile-stat"><span>Today</span><strong id="st-today">0 / 4</strong></div>
+    <div class="tile-stat"><span>Streak</span><strong id="st-streak">0 days</strong></div>
+  </div>
+  <p id="stats-error" class="error"></p>
+  <h3>Sessions, last 7 days</h3><canvas id="ch-last7"></canvas>
+  <h3>Focus minutes, last 30 days</h3><canvas id="ch-day30"></canvas>
+  <h3>Focus minutes by project</h3><canvas id="ch-project"></canvas>
+  <h3>Average rating by hour</h3><canvas id="ch-hour"></canvas>
+  <h3>Average rating by week</h3><canvas id="ch-rweek"></canvas>
+  <h3>Pauses per session by week</h3><canvas id="ch-pweek"></canvas>
+  <h3>Most common distractions</h3><ol id="st-notes"></ol>
+</section>
+
+<section id="settings" class="view" hidden>
+  <form id="settings-form" novalidate>
+    <label>Session length (minutes) <input id="set-minutes" type="number" min="1" max="180" step="1"></label>
+    <p class="error" data-for="session_minutes"></p>
+    <label>Notification volume <input id="set-volume" type="range" min="0" max="1" step="0.05"></label>
+    <button type="button" id="test-sound">Test sound</button>
+    <p class="error" data-for="volume"></p>
+    <label>Notification text <input id="set-text" maxlength="120"></label>
+    <p class="error" data-for="notification_text"></p>
+    <label>Daily target (sessions) <input id="set-target" type="number" min="1" max="20" step="1"></label>
+    <p class="error" data-for="daily_target"></p>
+    <button class="primary">Save settings</button>
+    <p id="settings-status" role="status"></p>
+  </form>
+</section>
+</main>
+</body>
+</html>
