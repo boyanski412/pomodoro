@@ -1,6 +1,6 @@
 # Pomodoro web app — design
 
-Date: 2026-10-16 · Status: awaiting review (rev 2: password login, remember-this-computer, browsers)
+Date: 2026-10-16 · Status: approved 2026-10-16 (rev 2)
 
 ## 1. Purpose
 
@@ -139,6 +139,6 @@ The rest of the UI stays minimal and quiet around the mug.
 1. Create a free Supabase project.
 2. Run the SQL from §3.
 3. Enable email + password login, turn off email confirmation (single user), and set the site URL to the GitHub Pages address.
-4. Log in once, then disable sign-ups.
+4. Create your user in the Supabase dashboard (Authentication → Users → Add user, auto-confirm), then disable sign-ups. The app has no sign-up screen.
 5. Create a GitHub repo and enable Pages.
 6. Put the Supabase URL and anon key in `app.js`. The anon key is public by design, and RLS protects the data.
