@@ -145,3 +145,43 @@ test('closeRun never produces negative durations when the clock moves backwards'
   assert.ok(session.focus_seconds >= 0);
   assert.ok(interruptions[0].duration_seconds >= 0);
 });
+
+// ---- Editing sessions ----
+const orig = { id: 's1', started_at: '2026-10-16T06:00:00.000Z', ended_at: '2026-10-16T06:27:00.000Z',
+  planned_seconds: 1500, focus_seconds: 1490, status: 'finished', project: 'A', rating: 3, note: null };
+const ints = [{ id: 'i1', session_id: 's1', kind: 'pause', at: '2026-10-16T06:10:00.000Z', duration_seconds: 120, note: 'Slack' },
+              { id: 'i2', session_id: 's1', kind: 'distraction', at: '2026-10-16T06:20:00.000Z', duration_seconds: null, note: null }];
+const form = o => ({ project: 'A', rating: '3', note: '', status: 'finished', focus_minutes: '25', planned_minutes: '25',
+  started_at: '2026-10-16T09:00', notes: { i1: 'Slack', i2: '' }, removed: [], ...o }); // 09:00 Sofia = 06:00Z
+const NOW = Date.parse('2026-10-16T12:00:00Z');
+
+test('editSession with no changes keeps the row exactly', () => {
+  const r = L.editSession(form(), orig, ints, NOW);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.session, orig);
+  assert.deepEqual(r.interruptions, ints);
+  assert.deepEqual(r.removed, []);
+});
+test('editSession applies field changes', () => {
+  const r = L.editSession(form({ project: ' B ', rating: '', note: ' x ', status: 'abandoned', focus_minutes: '10', planned_minutes: '30' }), orig, ints, NOW);
+  assert.deepEqual({ ...r.session }, { ...orig, project: 'B', rating: null, note: 'x', status: 'abandoned', focus_seconds: 600, planned_seconds: 1800 });
+});
+test('editSession moving the start shifts end and interruption times', () => {
+  const r = L.editSession(form({ started_at: '2026-10-16T08:00' }), orig, ints, NOW);
+  assert.equal(r.session.started_at, '2026-10-16T05:00:00.000Z');
+  assert.equal(r.session.ended_at, '2026-10-16T05:27:00.000Z');
+  assert.equal(r.interruptions[0].at, '2026-10-16T05:10:00.000Z');
+});
+test('editSession removes interruptions and updates their notes', () => {
+  const r = L.editSession(form({ notes: { i1: '  ', i2: 'phone' }, removed: ['i1'] }), orig, ints, NOW);
+  assert.deepEqual(r.removed, ['i1']);
+  assert.deepEqual(r.interruptions.map(i => [i.id, i.note]), [['i2', 'phone']]);
+});
+test('editSession rejects bad values', () => {
+  const r = L.editSession(form({ rating: '6', focus_minutes: '40', planned_minutes: '0', status: 'x', started_at: '2026-10-17T09:00' }), orig, ints, NOW);
+  assert.equal(r.ok, false);
+  assert.deepEqual(Object.keys(r.errors).sort(), ['planned_minutes', 'rating', 'started_at', 'status']);
+  const r2 = L.editSession(form({ focus_minutes: '26' }), orig, ints, NOW);
+  assert.deepEqual(Object.keys(r2.errors), ['focus_minutes']);
+  assert.deepEqual(Object.keys(L.editSession(form({ started_at: '' }), orig, ints, NOW).errors), ['started_at']);
+});

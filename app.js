@@ -41,6 +41,7 @@ function show(id) {
   for (const b of document.querySelectorAll('nav [data-view]')) b.toggleAttribute('aria-current', b.dataset.view === id);
   if (id === 'stats') renderStats();
   if (id === 'settings') fillSettings();
+  if (id === 'history') renderHistory();
   if (id === 'timer') controls();
 }
 for (const b of document.querySelectorAll('nav [data-view]')) b.onclick = () => show(b.dataset.view);
@@ -357,6 +358,112 @@ async function renderStats() {
     ? st.topDistractionNotes.map(n => Object.assign(document.createElement('li'), { textContent: `${n.note} (${n.count})` }))
     : [Object.assign(document.createElement('li'), { textContent: 'No notes yet.' })]));
 }
+
+// ---- History: edit and delete saved sessions ----
+let histDays = 30;
+let editing = null; // { session, interruptions, removed: Set }
+const pad2 = n => String(n).padStart(2, '0');
+const toLocalInput = iso => { const d = new Date(iso); return `${L.localDay(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const unsaved = id => (get('outbox') ?? []).some(i => i.session.id === id);
+
+async function renderHistory() {
+  $('hist-error').textContent = '';
+  const since = new Date(Date.now() - histDays * 864e5).toISOString();
+  const { data, error } = await db.from('sessions').select('*').gte('started_at', since).order('started_at', { ascending: false });
+  if (error) { $('hist-error').textContent = "Couldn't load your sessions. Check your connection and try again."; return; }
+  $('hist-list').replaceChildren(...(data.length ? data.map(historyRow)
+    : [Object.assign(document.createElement('li'), { textContent: 'No sessions in this period.' })]));
+}
+$('hist-more').onclick = () => { histDays += 30; renderHistory(); };
+
+function historyRow(s) {
+  const li = document.createElement('li');
+  const what = document.createElement('span');
+  what.className = 'what';
+  what.textContent = s.project ?? '(no project)';
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  const when = new Date(s.started_at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  meta.textContent = `${when} · ${Math.round(s.focus_seconds / 60)} min · ${s.status === 'finished' ? 'Finished' : 'Ended early'}${s.rating ? ` · rated ${s.rating}` : ''}`;
+  what.append(meta);
+  const edit = Object.assign(document.createElement('button'), { textContent: 'Edit' });
+  edit.onclick = () => openEdit(s);
+  const del = Object.assign(document.createElement('button'), { textContent: 'Delete' });
+  del.onclick = () => deleteSession(s);
+  li.append(what, edit, del);
+  return li;
+}
+
+async function deleteSession(s) {
+  if (unsaved(s.id)) { $('hist-error').textContent = "This session isn't saved yet. Try again once it's saved."; return; }
+  if (!confirm("Delete this session? This can't be undone.")) return;
+  const { error } = await db.from('sessions').delete().eq('id', s.id); // interruptions go with it (on delete cascade)
+  if (error) { $('hist-error').textContent = "Couldn't delete the session. Check your connection and try again."; return; }
+  renderHistory();
+}
+
+async function openEdit(s) {
+  $('hist-error').textContent = '';
+  if (unsaved(s.id)) { $('hist-error').textContent = "This session isn't saved yet. Try again once it's saved."; return; }
+  const { data, error } = await db.from('interruptions').select('*').eq('session_id', s.id).order('at');
+  if (error) { $('hist-error').textContent = "Couldn't load this session. Check your connection and try again."; return; }
+  editing = { session: s, interruptions: data, removed: new Set() };
+  $('edit-form').reset();
+  for (const p of document.querySelectorAll('[data-edit]')) p.textContent = '';
+  $('ed-status-msg').textContent = '';
+  $('ed-start').value = toLocalInput(s.started_at);
+  $('ed-project').value = s.project ?? '';
+  $('ed-planned').value = Math.round(s.planned_seconds / 60);
+  $('ed-focus').value = Math.round(s.focus_seconds / 60);
+  $('ed-status').value = s.status;
+  $('ed-rating').value = s.rating ?? '';
+  $('ed-note').value = s.note ?? '';
+  $('ed-ints').replaceChildren(...data.map(i => {
+    const row = document.createElement('div');
+    row.className = 'ed-int';
+    const label = document.createElement('label');
+    const time = new Date(i.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    label.textContent = `${i.kind === 'pause' ? `Pause (${fmt(i.duration_seconds ?? 0)})` : 'Distraction'} at ${time}`;
+    const input = Object.assign(document.createElement('input'), { value: i.note ?? '', maxLength: 200 });
+    input.dataset.id = i.id;
+    label.append(input);
+    const rm = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Remove' });
+    rm.onclick = () => {
+      const gone = !editing.removed.has(i.id);
+      gone ? editing.removed.add(i.id) : editing.removed.delete(i.id);
+      row.classList.toggle('removed', gone);
+      rm.textContent = gone ? 'Undo' : 'Remove';
+    };
+    row.append(label, rm);
+    return row;
+  }));
+  show('edit');
+}
+$('ed-cancel').onclick = () => { editing = null; show('history'); };
+
+$('edit-form').onsubmit = async e => {
+  e.preventDefault();
+  for (const p of document.querySelectorAll('[data-edit]')) p.textContent = '';
+  $('ed-status-msg').textContent = '';
+  const notes = Object.fromEntries([...$('ed-ints').querySelectorAll('input')].map(i => [i.dataset.id, i.value]));
+  const res = L.editSession({
+    started_at: $('ed-start').value, project: $('ed-project').value, planned_minutes: $('ed-planned').value,
+    focus_minutes: $('ed-focus').value, status: $('ed-status').value, rating: $('ed-rating').value,
+    note: $('ed-note').value, notes, removed: [...editing.removed],
+  }, editing.session, editing.interruptions, Date.now());
+  if (!res.ok) {
+    for (const [field, msg] of Object.entries(res.errors)) document.querySelector(`[data-edit="${field}"]`).textContent = msg;
+    return;
+  }
+  // Each write is idempotent, so a retry after a partial failure is safe.
+  const a = await db.from('sessions').upsert(res.session);
+  const b = !a.error && res.interruptions.length ? await db.from('interruptions').upsert(res.interruptions) : {};
+  const c = !a.error && !b.error && res.removed.length ? await db.from('interruptions').delete().in('id', res.removed) : {};
+  if (a.error || b.error || c.error) { $('ed-status-msg').textContent = "Couldn't save, check your connection. Your changes are still here."; return; }
+  editing = null;
+  loadProjects();
+  show('history');
+};
 
 // ---- Start ----
 const { data: { session } } = await db.auth.getSession();

@@ -13,6 +13,7 @@
 <nav id="nav" hidden>
   <button data-view="timer">Timer</button>
   <button data-view="stats">Stats</button>
+  <button data-view="history">History</button>
   <button data-view="settings">Settings</button>
   <button id="logout">Log out</button>
 </nav>
@@ -90,6 +91,38 @@
   <h3>Average rating by week</h3><canvas id="ch-rweek"></canvas>
   <h3>Pauses per session by week</h3><canvas id="ch-pweek"></canvas>
   <h3>Most common distractions</h3><ol id="st-notes"></ol>
+</section>
+
+<section id="history" class="view" hidden>
+  <ul id="hist-list" class="hist"></ul>
+  <p id="hist-error" class="error" role="alert"></p>
+  <button id="hist-more">Show older</button>
+</section>
+
+<section id="edit" class="view" hidden>
+  <h2>Edit session</h2>
+  <form id="edit-form" novalidate>
+    <label>Start <input id="ed-start" type="datetime-local"></label>
+    <p class="error" data-edit="started_at"></p>
+    <label>Working on <input id="ed-project" list="projects" maxlength="80"></label>
+    <label>Planned length (minutes) <input id="ed-planned" type="number" min="1" max="180" step="1"></label>
+    <p class="error" data-edit="planned_minutes"></p>
+    <label>Focus time (minutes) <input id="ed-focus" type="number" min="0" max="180" step="1"></label>
+    <p class="error" data-edit="focus_minutes"></p>
+    <label>Result
+      <select id="ed-status"><option value="finished">Finished</option><option value="abandoned">Ended early</option></select>
+    </label>
+    <p class="error" data-edit="status"></p>
+    <label>Rating
+      <select id="ed-rating"><option value="">No rating</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+    </label>
+    <p class="error" data-edit="rating"></p>
+    <label>Note <textarea id="ed-note" rows="3" maxlength="1000"></textarea></label>
+    <div id="ed-ints"></div>
+    <button class="primary">Save changes</button>
+    <button type="button" id="ed-cancel">Cancel</button>
+    <p id="ed-status-msg" class="error" role="alert"></p>
+  </form>
 </section>
 
 <section id="settings" class="view" hidden>

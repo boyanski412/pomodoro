@@ -163,3 +163,47 @@ export function moveStore(from, to) {
   for (let i = 0; i < from.length; i++) { const k = from.key(i); if (k.startsWith('pomo:') && k !== 'pomo:remember') ours.push(k); }
   ours.forEach(k => from.removeItem(k));
 }
+
+// ---- Editing a saved session ----
+// raw comes from the edit form: strings; started_at is a datetime-local value ('YYYY-MM-DDTHH:MM', local time).
+export function editSession(raw, session, interruptions, now) {
+  const errors = {};
+  const int = v => (String(v).trim() === '' ? NaN : Number(v));
+  const planned = int(raw.planned_minutes), focus = int(raw.focus_minutes);
+  const rating = String(raw.rating ?? '').trim() === '' ? null : Number(raw.rating);
+  const start = raw.started_at ? new Date(raw.started_at).getTime() : NaN;
+  if (!Number.isInteger(planned) || planned < 1 || planned > 180) errors.planned_minutes = 'Use a whole number from 1 to 180.';
+  else if (!Number.isInteger(focus) || focus < 0 || focus > planned) errors.focus_minutes = 'Use a whole number from 0 to the planned length.';
+  if (rating !== null && !(Number.isInteger(rating) && rating >= 1 && rating <= 5)) errors.rating = 'Pick a rating from 1 to 5, or leave it empty.';
+  if (!['finished', 'abandoned'].includes(raw.status)) errors.status = 'Pick finished or ended early.';
+  if (Number.isNaN(start)) errors.started_at = 'Enter a start date and time.';
+  else if (start > now) errors.started_at = "The start can't be in the future.";
+  if (Object.keys(errors).length) return { ok: false, errors };
+
+  // Unchanged rounded values keep their exact stored seconds; the form shows whole minutes.
+  const keep = (seconds, minutes) => (Math.round(seconds / 60) === minutes ? seconds : minutes * 60);
+  const origStart = Date.parse(session.started_at);
+  const delta = start - Math.floor(origStart / 60000) * 60000 === 0 ? 0 : start - origStart;
+  const shift = t => (t == null || !delta ? t : new Date(Date.parse(t) + delta).toISOString());
+  const removed = raw.removed ?? [];
+  return {
+    ok: true,
+    session: {
+      ...session,
+      started_at: shift(session.started_at),
+      ended_at: shift(session.ended_at),
+      planned_seconds: keep(session.planned_seconds, planned),
+      focus_seconds: keep(session.focus_seconds, focus),
+      status: raw.status,
+      project: cleanNote(raw.project),
+      rating,
+      note: cleanNote(raw.note),
+    },
+    interruptions: interruptions.filter(i => !removed.includes(i.id)).map(i => ({
+      ...i,
+      at: shift(i.at),
+      note: raw.notes && i.id in raw.notes ? cleanNote(raw.notes[i.id]) : i.note,
+    })),
+    removed,
+  };
+}
