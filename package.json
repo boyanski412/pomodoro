@@ -1,0 +1,1 @@
+{"type":"module","scripts":{"test":"TZ=Europe/Sofia node --test"}}
