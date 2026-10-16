@@ -1,6 +1,6 @@
 # Pomodoro web app — design
 
-Date: 2026-10-16 · Status: awaiting review
+Date: 2026-10-16 · Status: awaiting review (rev 2: password login, remember-this-computer, browsers)
 
 ## 1. Purpose
 
@@ -19,7 +19,9 @@ Out of scope for v1: iPhone/mobile, distraction blocking, multiple users, keyboa
 - **Hosting:** GitHub Pages (free).
 - **Backend:** Supabase free tier (Auth + Postgres). No server code.
   - Free tier (as of May 2026): 2 projects, 500 MB DB. Projects pause after 1 week of inactivity; data survives, restore from dashboard.
-- **Auth:** Supabase email magic link. Public sign-ups disabled after the owner's account is created. Planned later: switch to email + password (login form change only).
+- **Auth:** Supabase email + password. Public sign-ups disabled after the owner's account is created.
+- **Storage on each computer:** a "Remember this computer" checkbox at login decides where the browser keeps the login, running session and outbox. Ticked → `localStorage` (survives closing the tab). Unticked → `sessionStorage` (erased when the tab closes; survives refresh). The choice is itself kept only in that same storage, so an unticked computer keeps nothing after the tab closes. Supabase client is created with `auth.storage` set to the chosen store.
+- **Browsers:** current Safari and Chrome on macOS, including private/incognito windows.
 
 `logic.js` holds all pure logic (no DOM, no network) so it can be tested in Node. `app.js` holds UI, timer loop, Supabase calls.
 
@@ -66,7 +68,7 @@ Breaks are not stored.
 
 ## 4. Screens and flow
 
-1. **Login** — email field → magic link.
+1. **Login** — email, password, "Remember this computer" checkbox (unticked by default).
 2. **Timer (main)**
    - Project label: pick from recent labels or type new.
    - Mug visual (see §5) drains as the session runs; time left shown below.
@@ -97,18 +99,19 @@ The rest of the UI stays minimal and quiet around the mug.
 ## 6. Timer behaviour
 
 - The state is timestamps: `started_at`, a list of pauses, and `planned_seconds`. Time left = planned − (now − started − paused time). The display loop only redraws, so it stays accurate when the browser throttles a background tab.
-- The running session is saved to `localStorage` on every state change, so a refresh or a closed tab resumes it.
+- The running session is saved to the chosen store (see §2) on every state change, so a refresh resumes it; a closed tab resumes it only on a remembered computer.
 - **Sleep or wake past the end:** the session is closed at the planned end time. Focus time then equals the planned time, not the wake time.
 - **Audio:** pressing Start unlocks audio, because browsers block sound until the user clicks. If notifications are denied, the sound still plays and the tab title changes to "Time's up".
-- If another tab on the same computer already has a running session in `localStorage`, show a warning.
+- If another tab on the same computer already has a running session in `localStorage` (remembered computers only), show a warning.
 
 ## 7. Error handling
 
 - **Idempotent saves:** the browser generates the IDs, and saves use `upsert`. A retry never creates a duplicate.
-- **Outbox:** a finished session and its interruptions go into a `localStorage` outbox first, and are removed only after Supabase confirms the write.
+- **Outbox:** a finished session and its interruptions go into an outbox in the chosen store first, and are removed only after Supabase confirms the write.
   - The outbox is flushed on app load and on the `online` event.
   - While it isn't empty, a banner says "Not saved yet, will retry."
   - If the error shows the project is paused or unreachable, the banner adds a hint to restore it from the Supabase dashboard.
+- **Unremembered computer:** closing the tab while the outbox is not empty loses those sessions; the app warns via the browser's leave-page prompt while the outbox is not empty.
 - **Expired login:** the session stays local. You log in again, then the outbox flushes.
 - Errors are shown as one plain sentence, never as raw exception text.
 
@@ -122,19 +125,20 @@ The rest of the UI stays minimal and quiet around the mug.
   - streak calculation
   - stats aggregations
 - Security check: query each table with the anon key while logged out, and confirm that zero rows come back.
-- Manual checklist, run once:
+- Manual checklist, run once in Safari and once in a Chrome incognito window:
   - notification and sound
   - volume
   - refresh mid-session
   - pause → resume note
   - finish while offline → reconnect → saved
   - stats render
+  - unticked "Remember this computer": close tab, reopen → logged out, browser storage for the site empty
 
 ## 9. Setup steps (owner)
 
 1. Create a free Supabase project.
 2. Run the SQL from §3.
-3. Enable the magic link login, and set the site URL to the GitHub Pages address.
+3. Enable email + password login, turn off email confirmation (single user), and set the site URL to the GitHub Pages address.
 4. Log in once, then disable sign-ups.
 5. Create a GitHub repo and enable Pages.
 6. Put the Supabase URL and anon key in `app.js`. The anon key is public by design, and RLS protects the data.
